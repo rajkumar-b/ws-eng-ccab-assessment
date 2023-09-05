@@ -18,6 +18,16 @@ async function connect(): Promise<ReturnType<typeof createClient>> {
     return client;
 }
 
+async function lockRow(client:ReturnType<typeof createClient>, account: string, timeout = 10): Promise<boolean> {
+    const lockKey = `lock:${account}`;
+    return await client.set(lockKey, "locked", {'EX': timeout,'NX': true}) === "OK";
+}
+  
+async function unlockRow(client:ReturnType<typeof createClient>, account: string): Promise<void> {
+    const lockKey = `lock:${account}`;
+    await client.del(lockKey);
+}
+
 async function reset(account: string): Promise<void> {
     const client = await connect();
     try {
@@ -30,10 +40,13 @@ async function reset(account: string): Promise<void> {
 async function charge(account: string, charges: number): Promise<ChargeResult> {
     const client = await connect();
     try {
+        do{
+            var locked = await lockRow(client, account);
+        } while (!locked);
         const balance = parseInt((await client.get(`${account}/balance`)) ?? "");
         if (balance >= charges) {
-            await client.set(`${account}/balance`, balance - charges);
-            const remainingBalance = parseInt((await client.get(`${account}/balance`)) ?? "");
+            const remainingBalance = balance - charges;
+            await client.set(`${account}/balance`, remainingBalance);
             console.log(`Charged: ${charges}; Remaining: ${remainingBalance}`);
             return { isAuthorized: true, remainingBalance, charges };
         } else {
@@ -41,6 +54,7 @@ async function charge(account: string, charges: number): Promise<ChargeResult> {
             return { isAuthorized: false, remainingBalance: balance, charges: 0 };
         }
     } finally {
+        await unlockRow(client, account);
         await client.disconnect();
     }
 }
@@ -63,7 +77,11 @@ export function buildApp(): express.Application {
         try {
             const account = req.body.account ?? "account";
             const result = await charge(account, req.body.charges ?? 10);
-            console.log(`Successfully charged account ${account}`);
+            if (result.isAuthorized) {
+                console.log(`Successfully charged account ${account}`);
+            } else {
+                console.log(`Unable to charge account ${account}`)
+            }
             res.status(200).json(result);
         } catch (e) {
             console.error("Error while charging account", e);

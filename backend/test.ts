@@ -54,6 +54,8 @@ async function runTests() {
     await failUnderchargeTest();
     console.log('\n\nBasic Concurrency Test:\n');
     await concurrencyTest(70, 10);
+    console.log('\n\nBasic Concurrency Test 2:\n');
+    await concurrencyTest(10, 12);
 }
 
 runTests().catch(console.error);
